@@ -128,13 +128,52 @@ def get_writer(experiment_name: str):
 
 import torchvision.models as models
 
-epochs = 50
+class LabVGG19(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = torch.nn.Sequential()
+        # dokończ konstruktor
+        vgg19 = models.vgg19(pretrained=True)
+        self.part0 = vgg19.features[0:4]
+        self.part1 = vgg19.features[4:9]
+        self.part2 = vgg19.features[9:18]
 
-for pretrained in [True, False]:
-    experiment_name = f"VGG19-{desc('pretrained', pretrained)}"
+    def forward(self, x):
+        # dokończ forward
+        out0 = self.part0(x)
+        out1 = self.part1(out0)
+        out2 = self.part2(out1)
+        return out0, out1, out2
+
+class CustomVGG19C10(torch.nn.Module):
+    def __init__(self, labels, pool_size = 7, freeze: bool = False):
+        super().__init__()
+        self.labvgg19 = LabVGG19()
+        self.adaptive_avg_pool = nn.AdaptiveAvgPool2d(output_size=(pool_size, pool_size))
+        self.classifier = torch.nn.Sequential()
+        self.classifier.add_module("flatten", torch.nn.Flatten())
+        self.classifier.add_module("linear_1", torch.nn.Linear(in_features=(64 + 128 + 256)*pool_size*pool_size, out_features=labels))
+
+        if freeze:
+            for param in self.labvgg19.parameters():
+                param.requires_grad = False
+
+    def forward(self, x):
+        out0, out1, out2 = self.labvgg19(x)
+        out0, out1, out2 = map(self.adaptive_avg_pool, (out0, out1, out2))
+        out = torch.cat([out0, out1, out2], dim=1)
+        return self.classifier(out)
+
+
+#Eksperymenty
+epochs = 50
+size = 1
+
+for freeze in [False, True]:
+    experiment_name = f"CustVGG19-size-{size}-{desc('freeze', freeze)}"
     writer = get_writer(experiment_name)
 
-    model = models.vgg19(pretrained=pretrained).cuda()
+    model = CustomVGG19C10(labels=10, pool_size=size, freeze=freeze).cuda()
 
     loss_fn = torch.nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters())
